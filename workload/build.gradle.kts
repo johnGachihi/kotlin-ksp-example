@@ -12,6 +12,6 @@ repositories {
 
 dependencies {
     implementation(kotlin("stdlib"))
-    implementation(project(":kotlin-processor"))
-    ksp(project(":kotlin-processor"))
+    implementation(project(":preferences-processor"))
+    ksp(project(":preferences-processor"))
 }
