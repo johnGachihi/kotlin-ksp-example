@@ -1,3 +1,3 @@
 rootProject.name = "hello-ksp"
-include("kotlin-processor")
+include("preferences-processor")
 include("workload")
