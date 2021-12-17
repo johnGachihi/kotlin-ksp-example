@@ -15,3 +15,12 @@ dependencies {
     implementation(project(":preferences-processor"))
     ksp(project(":preferences-processor"))
 }
+
+kotlin {
+    sourceSets.main {
+        kotlin.srcDir("build/generated/ksp/main/kotlin")
+    }
+    sourceSets.test {
+        kotlin.srcDir("build/generated/ksp/test/kotlin")
+    }
+}
