@@ -40,6 +40,7 @@ class PreferencesProcessorTest {
         fun `then warns user`() {
             val compilation = compiler.compile()
 
+            // TODO: Use assertGeneratedFile(...)
             assertThat(compilation.messages).contains(
                 "Defining preferences holder using a class/object is not supported. " +
                         "The class/object PaymentPreferences will therefore be ignored"
@@ -86,8 +87,8 @@ class PreferencesProcessorTest {
 
             process(kotlinSrc)
 
-            assertGeneratedFile("preferences/PaymentPreferences.kt").exists()
-            assertGeneratedFile("preferences/CurrencyPreferences.kt").exists()
+            assertGeneratedPreferencesFile("PaymentPreferences.kt").exists()
+            assertGeneratedPreferencesFile("CurrencyPreferences.kt").exists()
         }
 
         @Test
@@ -107,7 +108,7 @@ class PreferencesProcessorTest {
 
             process(kotlinSrc)
 
-            assertGeneratedFile("preferences/PaymentPreferences.kt").hasCodeContent(
+            assertGeneratedPreferencesFile("PaymentPreferences.kt").hasCodeContent(
                 """
                     package ${PreferencesProcessor.PREFERENCES_PACKAGE}
                     
@@ -130,30 +131,58 @@ class PreferencesProcessorTest {
                             default = "20",
                             converter = com.johngachihi.preferencesprocessor.converters.DurationConverter::class
                         )
-                        var paymentLife: java.time.Duration?
+                        var paymentLife: java.time.Duration
+                        
+                        @com.johngachihi.preferencesprocessor.Preference(
+                            key = "payment_session_life_minutes",
+                            default = "10",
+                            converter = com.johngachihi.preferencesprocessor.converters.DurationConverter::class
+                        )
+                        val paymentSessionLife: java.time.Duration
                     }
                 """
             )
 
             process(kotlinSrc)
 
-            assertGeneratedFile("preferences/PaymentPreferences.kt")
-                .hasCodeContent(
-                    """
-                    package ${PreferencesProcessor.PREFERENCES_PACKAGE}
-
-                    class PaymentPreferences(private val prefStore: com.johngachihi.preferencesprocessor.PreferencesStore) {
-                        var paymentLife: java.time.Duration
-                            get() {
-                                val converter = com.johngachihi.preferencesprocessor.DurationConverter()
-                                val rawValue =  prefStore.read("payment_life_minutes")
-                                    ?: "20"
-                                return converter.parse(rawValue)
-                            }
-                    }
-                """.trimIndent()
-                )
+            assertGeneratedPreferencesFile("PaymentPreferences.kt").hasCodeContent(
+                """
+                |package ${PreferencesProcessor.PREFERENCES_PACKAGE}
+                |
+                |class PaymentPreferences(
+                |    private val prefStore: com.johngachihi.preferencesprocessor.PreferencesStore
+                |) {
+                |    var paymentLife: java.time.Duration
+                |        get() {
+                |            val converter = com.johngachihi.preferencesprocessor.converters.DurationConverter()
+                |            val rawValue = prefStore.read("payment_life_minutes")
+                |                ?: "20"
+                |            return converter.parse(rawValue)
+                |        }
+                |        set(value) {
+                |            val converter = com.johngachihi.preferencesprocessor.converters.DurationConverter()
+                |            val rawValue = converter.format(value)
+                |            prefStore.write("payment_life_minutes", rawValue)
+                |        }
+                |    var paymentSessionLife: java.time.Duration
+                |        get() {
+                |            val converter = com.johngachihi.preferencesprocessor.converters.DurationConverter()
+                |            val rawValue = prefStore.read("payment_session_life_minutes")
+                |                ?: "10"
+                |            return converter.parse(rawValue)
+                |        }
+                |        set(value) {
+                |            val converter = com.johngachihi.preferencesprocessor.converters.DurationConverter()
+                |            val rawValue = converter.format(value)
+                |            prefStore.write("payment_session_life_minutes", rawValue)
+                |        }
+                |}
+                """.trimMargin(),
+                trimIndent = false
+            )
         }
+
+        // TODO!!: Test case for when there is no converter
 
         private fun process(vararg sourceFile: SourceFile) {
             compiler.sources = listOf(*sourceFile)
@@ -165,11 +194,6 @@ class PreferencesProcessorTest {
                             "Instead exit code ${compilation.exitCode} returned."
                 )
                 .isEqualTo(KotlinCompilation.ExitCode.OK)
-
-            // Remove
-            compiler.kspSourcesDir.walk()
-                .filter { it.isFile && it.extension == "kt" }
-                .forEach { println(it.absolutePath) }
         }
 
         private fun assertGeneratedFile(relativePath: String): AbstractFileAssert<*> {
@@ -180,8 +204,16 @@ class PreferencesProcessorTest {
             return assertThat(generatedFile)
         }
 
+        private fun assertGeneratedPreferencesFile(fileName: String): AbstractFileAssert<*> {
+            val preferencesRelativePath =
+                PreferencesProcessor.PREFERENCES_PACKAGE.replace(".", "/")
+
+            return assertGeneratedFile("$preferencesRelativePath/$fileName")
+        }
+
         private fun AbstractFileAssert<*>.hasCodeContent(
-            @Language("kotlin") code: String
-        ): AbstractFileAssert<*>? = hasContent(code.trimIndent())
+            @Language("kotlin") code: String,
+            trimIndent: Boolean = true
+        ): AbstractFileAssert<*>? = hasContent(if (trimIndent) code.trimIndent() else code)
     }
 }
