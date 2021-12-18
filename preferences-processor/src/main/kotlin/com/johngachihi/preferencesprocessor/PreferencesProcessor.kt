@@ -13,6 +13,7 @@ import com.google.devtools.ksp.symbol.KSAnnotated
 import com.google.devtools.ksp.symbol.KSAnnotation
 import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSPropertyDeclaration
+import com.google.devtools.ksp.symbol.KSType
 import com.google.devtools.ksp.symbol.KSVisitorVoid
 import com.google.devtools.ksp.validate
 import java.io.OutputStream
@@ -25,6 +26,7 @@ class PreferencesProcessor(
 
     companion object {
         const val PREFERENCES_PACKAGE = "com.johngachihi.preferencesprocessor.preferences"
+        private const val PREF_STORE_ARG_IDENTIFIER = "prefStore"
     }
 
     override fun process(resolver: Resolver): List<KSAnnotated> {
@@ -41,27 +43,22 @@ class PreferencesProcessor(
         lateinit var outputFile: OutputStream
 
         override fun visitClassDeclaration(classDeclaration: KSClassDeclaration, data: Unit) {
-            if (classDeclaration.classKind != ClassKind.INTERFACE) {
-                logger.warn(
-                    "Defining preferences holder using a class/object is not supported. " +
-                            "The class/object ${classDeclaration.simpleName.asString()} will therefore be ignored"
-                )
-                return
-            }
+            if (!classDeclaration.validateWithWarning()) return
 
             val classSimpleName = classDeclaration.simpleName.asString()
-
             val containingFile = classDeclaration.containingFile!!
+
             outputFile = codeGenerator.createNewFile(
                 // Why set aggregating to false
                 Dependencies(false, containingFile),
-                "preferences",
+                PREFERENCES_PACKAGE,
                 classSimpleName
             )
+            // TODO: Use raw string
             outputFile.appendln("package $PREFERENCES_PACKAGE")
             outputFile.appendln()
             outputFile.appendln("class $classSimpleName(")
-            outputFile.appendln("    private val prefStore: ${PreferencesStore::class.qualifiedName}")
+            outputFile.appendln("    private val $PREF_STORE_ARG_IDENTIFIER: ${PreferencesStore::class.qualifiedName}")
             outputFile.appendln(") {")
 
             classDeclaration.getDeclaredProperties()
@@ -76,12 +73,75 @@ class PreferencesProcessor(
             val qualifiedName = property.type.resolve().declaration.qualifiedName!!.asString()
 
             val annotation = property.getAnnotationByType(Preference::class)
-            val preferenceArgs = annotation?.getPreferenceArguments()
+            val preferenceArgs = annotation!!.getPreferenceArguments()
+            val (key, default, converter) = preferenceArgs
 
-            outputFile.appendln("    var ${property.simpleName.asString()}: $qualifiedName")
-            outputFile.appendln("        get() {")
-            outputFile.appendln("            ")
-            outputFile.appendln("        }")
+            outputFile.appendln(
+                """
+                |    var ${property.simpleName.asString()}: $qualifiedName
+                |        get() {
+                |            val converter = $converter()
+                |            val rawValue = $PREF_STORE_ARG_IDENTIFIER.read("$key")
+                |                ?: "$default"
+                |            return converter.parse(rawValue)
+                |        }
+                |        set(value) {
+                |            val converter = $converter()
+                |            val rawValue = converter.format(value)
+                |            $PREF_STORE_ARG_IDENTIFIER.write("$key", rawValue)
+                |        }
+                """.trimMargin()
+            )
+        }
+
+        private fun KSClassDeclaration.validateWithWarning(): Boolean {
+            if (classKind != ClassKind.INTERFACE) {
+                logger.warn(
+                    "Defining preferences holder using a class/object is not supported. " +
+                            "The class/object ${simpleName.asString()} will therefore be ignored"
+                )
+                return false
+            }
+            return true
+        }
+
+        private fun KSAnnotation.getPreferenceArguments(): PreferenceArgs {
+            val args = arguments.associateBy(
+                { it.name?.asString() },
+                { it.value }
+            )
+
+            return PreferenceArgs(
+                key = args["key"] as String,
+                default = args["default"] as String,
+                converter = (args["converter"] as KSType).declaration.qualifiedName!!.asString()
+            )
+        }
+
+        private fun <T : Annotation> KSPropertyDeclaration.getAnnotationByType(
+            annotationKClass: KClass<T>
+        ): KSAnnotation? {
+            fun KSAnnotation.isOfRequiredType() =
+                annotationType.resolve().declaration.qualifiedName?.asString() ==
+                        annotationKClass.qualifiedName
+
+            return annotations
+                .filter { it.isOfRequiredType() }
+                .firstOrNull()
+        }
+
+        // TODO: Use getAnnotationByType to check if annotation present
+        private fun <T : Annotation> KSPropertyDeclaration.isAnnotationPresent(
+            annotationKClass: KClass<T>
+        ): Boolean {
+            annotations.forEach {
+                if (it.annotationType.resolve().declaration.qualifiedName?.asString() ==
+                    annotationKClass.qualifiedName
+                ) {
+                    return true
+                }
+            }
+            return false
         }
 
         private fun OutputStream.append(str: String) {
@@ -94,37 +154,11 @@ class PreferencesProcessor(
 
     }
 
-    data class PreferenceArgs(val key: String, val default: String)
-
-    private fun KSAnnotation.getPreferenceArguments(): PreferenceArgs {
-        TODO()
-    }
-
-    private fun <T : Annotation> KSPropertyDeclaration.getAnnotationByType(
-        annotationKClass: KClass<T>
-    ): KSAnnotation? {
-        fun KSAnnotation.isOfRequiredType() =
-            annotationType.resolve().declaration.qualifiedName?.asString() ==
-                    annotationKClass.qualifiedName
-
-        return annotations
-            .filter { it.isOfRequiredType() }
-            .firstOrNull()
-    }
-
-    // TODO: Use getAnnotationByType
-    private fun <T : Annotation> KSPropertyDeclaration.isAnnotationPresent(
-        annotationKClass: KClass<T>
-    ): Boolean {
-        annotations.forEach {
-            if (it.annotationType.resolve().declaration.qualifiedName?.asString() ==
-                annotationKClass.qualifiedName
-            ) {
-                return true
-            }
-        }
-        return false
-    }
+    data class PreferenceArgs(
+        val key: String,
+        val default: String,
+        val converter: String
+    )
 }
 
 
