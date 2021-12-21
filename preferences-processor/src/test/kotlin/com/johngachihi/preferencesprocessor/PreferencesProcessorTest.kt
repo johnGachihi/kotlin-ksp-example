@@ -14,11 +14,11 @@ import org.junit.jupiter.api.Test
 import java.io.File
 
 class PreferencesProcessorTest {
+    private lateinit var compiler: KotlinCompilation
+
     @Nested
     @DisplayName("When preferences are defined with a Class or Object")
     inner class TestWhenPreferencesDefinedWithClassOrObject {
-        lateinit var compiler: KotlinCompilation
-
         @BeforeEach
         fun initCompiler() {
             val kotlinSrc = SourceFile.kotlin(
@@ -40,7 +40,6 @@ class PreferencesProcessorTest {
         fun `then warns user`() {
             val compilation = compiler.compile()
 
-            // TODO: Use assertGeneratedFile(...)
             assertThat(compilation.messages).contains(
                 "Defining preferences holder using a class/object is not supported. " +
                         "The class/object PaymentPreferences will therefore be ignored"
@@ -51,16 +50,12 @@ class PreferencesProcessorTest {
         fun `then ignores`() {
             compiler.compile()
 
-            assertThat(
-                File(compiler.kspSourcesDir, "kotlin/preferences/PaymentPreferences.kt")
-            ).doesNotExist()
+            assertGeneratedPreferencesFile("PaymentPreferences.kt").doesNotExist()
         }
     }
 
     @Nested
     inner class TestWhenPreferencesDefinedUsingInterface {
-        private lateinit var compiler: KotlinCompilation
-
         @BeforeEach
         fun initCompiler() {
             compiler = KotlinCompilation().apply {
@@ -184,36 +179,61 @@ class PreferencesProcessorTest {
 
         // TODO!!: Test case for when there is no converter
 
-        private fun process(vararg sourceFile: SourceFile) {
-            compiler.sources = listOf(*sourceFile)
-            val compilation = compiler.compile()
-
-            assertThat(compilation.exitCode)
-                .withFailMessage(
-                    "Expecting compiler to exit successfully. " +
-                            "Instead exit code ${compilation.exitCode} returned."
-                )
-                .isEqualTo(KotlinCompilation.ExitCode.OK)
-        }
-
-        private fun assertGeneratedFile(relativePath: String): AbstractFileAssert<*> {
-            val generatedFile = File(
-                compiler.kspSourcesDir,
-                "kotlin/$relativePath"
+        @Test
+        fun `Skips variables that are not annotated with @Preference`() {
+            val sourceFile = SourceFile.kotlin(
+                "preferences.kt", """
+                @com.johngachihi.preferencesprocessor.Preferences
+                interface PaymentPreferences {
+                    var nonPreferenceVar: String
+                }
+            """.trimIndent()
             )
-            return assertThat(generatedFile)
+
+            process(sourceFile)
+
+            assertGeneratedPreferencesFile("PaymentPreferences.kt").hasCodeContent(
+                """
+                package ${PreferencesProcessor.PREFERENCES_PACKAGE}
+                
+                class PaymentPreferences(
+                    private val prefStore: com.johngachihi.preferencesprocessor.PreferencesStore
+                ) {
+                }
+            """.trimIndent()
+            )
         }
-
-        private fun assertGeneratedPreferencesFile(fileName: String): AbstractFileAssert<*> {
-            val preferencesRelativePath =
-                PreferencesProcessor.PREFERENCES_PACKAGE.replace(".", "/")
-
-            return assertGeneratedFile("$preferencesRelativePath/$fileName")
-        }
-
-        private fun AbstractFileAssert<*>.hasCodeContent(
-            @Language("kotlin") code: String,
-            trimIndent: Boolean = true
-        ): AbstractFileAssert<*>? = hasContent(if (trimIndent) code.trimIndent() else code)
     }
+
+    private fun process(vararg sourceFile: SourceFile) {
+        compiler.sources = listOf(*sourceFile)
+        val compilation = compiler.compile()
+
+        assertThat(compilation.exitCode)
+            .withFailMessage(
+                "Expecting compiler to exit successfully. " +
+                        "Instead exit code ${compilation.exitCode} returned."
+            )
+            .isEqualTo(KotlinCompilation.ExitCode.OK)
+    }
+
+    private fun assertGeneratedFile(relativePath: String): AbstractFileAssert<*> {
+        val generatedFile = File(
+            compiler.kspSourcesDir,
+            "kotlin/$relativePath"
+        )
+        return assertThat(generatedFile)
+    }
+
+    private fun assertGeneratedPreferencesFile(fileName: String): AbstractFileAssert<*> {
+        val preferencesRelativePath =
+            PreferencesProcessor.PREFERENCES_PACKAGE.replace(".", "/")
+
+        return assertGeneratedFile("$preferencesRelativePath/$fileName")
+    }
+
+    private fun AbstractFileAssert<*>.hasCodeContent(
+        @Language("kotlin") code: String,
+        trimIndent: Boolean = true
+    ): AbstractFileAssert<*>? = hasContent(if (trimIndent) code.trimIndent() else code)
 }
