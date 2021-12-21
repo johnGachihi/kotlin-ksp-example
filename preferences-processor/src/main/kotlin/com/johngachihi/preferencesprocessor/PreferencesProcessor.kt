@@ -54,12 +54,13 @@ class PreferencesProcessor(
                 PREFERENCES_PACKAGE,
                 classSimpleName
             )
-            // TODO: Use raw string
-            outputFile.appendln("package $PREFERENCES_PACKAGE")
-            outputFile.appendln()
-            outputFile.appendln("class $classSimpleName(")
-            outputFile.appendln("    private val $PREF_STORE_ARG_IDENTIFIER: ${PreferencesStore::class.qualifiedName}")
-            outputFile.appendln(") {")
+            outputFile.appendln("""
+                |package $PREFERENCES_PACKAGE
+                |
+                |class $classSimpleName(
+                |    private val $PREF_STORE_ARG_IDENTIFIER: ${PreferencesStore::class.qualifiedName}
+                |) {
+            """.trimMargin())
 
             classDeclaration.getDeclaredProperties()
                 .filter { it.isAnnotationPresent(Preference::class) }
