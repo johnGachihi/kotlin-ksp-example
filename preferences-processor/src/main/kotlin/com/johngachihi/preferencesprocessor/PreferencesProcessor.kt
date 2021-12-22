@@ -10,10 +10,8 @@ import com.google.devtools.ksp.processing.SymbolProcessorEnvironment
 import com.google.devtools.ksp.processing.SymbolProcessorProvider
 import com.google.devtools.ksp.symbol.ClassKind
 import com.google.devtools.ksp.symbol.KSAnnotated
-import com.google.devtools.ksp.symbol.KSAnnotation
 import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSPropertyDeclaration
-import com.google.devtools.ksp.symbol.KSType
 import com.google.devtools.ksp.symbol.KSVisitorVoid
 import com.google.devtools.ksp.validate
 import java.io.OutputStream
@@ -35,11 +33,12 @@ class PreferencesProcessor(
             .filter { it is KSClassDeclaration && it.validate() }
             .forEach { it.accept(PreferencesVisitor(), Unit) }
 
+        // TODO: Explain why you are returning empty list
         return emptyList()
     }
 
     inner class PreferencesVisitor : KSVisitorVoid() {
-        lateinit var outputFile: OutputStream
+        private lateinit var outputFile: OutputStream
 
         override fun visitClassDeclaration(classDeclaration: KSClassDeclaration, data: Unit) {
             if (!classDeclaration.validateWithWarning()) return
@@ -53,13 +52,15 @@ class PreferencesProcessor(
                 PREFERENCES_PACKAGE,
                 classSimpleName
             )
-            outputFile.appendln("""
+            outputFile.appendln(
+                """
                 |package $PREFERENCES_PACKAGE
                 |
                 |class $classSimpleName(
                 |    private val $PREF_STORE_ARG_IDENTIFIER: ${PreferencesStore::class.qualifiedName}
                 |) {
-            """.trimMargin())
+            """.trimMargin()
+            )
 
             classDeclaration.getDeclaredProperties().forEach {
                 it.accept(this@PreferencesVisitor, Unit)
@@ -80,51 +81,36 @@ class PreferencesProcessor(
             return true
         }
 
+        // TODO: How do I test that the processor validates preference properties
+        //       here
         override fun visitPropertyDeclaration(property: KSPropertyDeclaration, data: Unit) {
-            val annotation = property.getPreferenceAnnotation()
+            val preferenceProperty = KSPreferenceProperty.tryCreateFrom(property)
                 ?: return
 
-            val typeName = property.type.resolve().declaration.qualifiedName!!.asString()
-            val (key, default, converter) = annotation.getPreferenceArguments()
+            preferenceProperty.runValidation().let {
+                if (it is ValidationResult.Invalid) {
+                    logger.error(it.error)
+                }
+            }
+
+            val typeName = preferenceProperty.typeName
+            val (key, default, converter) = preferenceProperty.preferenceAnnotationArgs
 
             outputFile.appendln(
                 """
                 |    var ${property.simpleName.asString()}: $typeName
                 |        get() {
-                |            val converter = $converter()
+                |            val converter = ${converter.qualifiedName!!.asString()}()
                 |            val rawValue = $PREF_STORE_ARG_IDENTIFIER.read("$key")
                 |                ?: "$default"
                 |            return converter.parse(rawValue)
                 |        }
                 |        set(value) {
-                |            val converter = $converter()
+                |            val converter = ${converter.qualifiedName!!.asString()}()
                 |            val rawValue = converter.format(value)
                 |            $PREF_STORE_ARG_IDENTIFIER.write("$key", rawValue)
                 |        }
                 """.trimMargin()
-            )
-        }
-
-        private fun KSPropertyDeclaration.getPreferenceAnnotation(): KSAnnotation? {
-            fun KSAnnotation.isOfRequiredType() =
-                annotationType.resolve().declaration.qualifiedName?.asString() ==
-                        Preference::class.qualifiedName
-
-            return annotations
-                .filter { it.isOfRequiredType() }
-                .firstOrNull()
-        }
-
-        private fun KSAnnotation.getPreferenceArguments(): PreferenceArgs {
-            val args = arguments.associateBy(
-                { it.name?.asString() },
-                { it.value }
-            )
-
-            return PreferenceArgs(
-                key = args["key"] as String,
-                default = args["default"] as String,
-                converter = (args["converter"] as KSType).declaration.qualifiedName!!.asString()
             )
         }
 
@@ -138,11 +124,6 @@ class PreferencesProcessor(
 
     }
 
-    data class PreferenceArgs(
-        val key: String,
-        val default: String,
-        val converter: String
-    )
 }
 
 
