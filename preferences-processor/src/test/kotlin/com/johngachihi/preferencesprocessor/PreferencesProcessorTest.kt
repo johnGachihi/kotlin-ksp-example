@@ -1,6 +1,8 @@
 package com.johngachihi.preferencesprocessor
 
 import com.tschuchort.compiletesting.KotlinCompilation
+import com.tschuchort.compiletesting.KotlinCompilation.ExitCode
+import com.tschuchort.compiletesting.KotlinCompilation.Result
 import com.tschuchort.compiletesting.SourceFile
 import com.tschuchort.compiletesting.kspSourcesDir
 import com.tschuchort.compiletesting.symbolProcessorProviders
@@ -177,8 +179,6 @@ class PreferencesProcessorTest {
             )
         }
 
-        // TODO!!: Test case for when there is no converter
-
         @Test
         fun `Skips variables that are not annotated with @Preference`() {
             val sourceFile = SourceFile.kotlin(
@@ -203,18 +203,25 @@ class PreferencesProcessorTest {
             """.trimIndent()
             )
         }
-    }
 
-    private fun process(vararg sourceFile: SourceFile) {
-        compiler.sources = listOf(*sourceFile)
-        val compilation = compiler.compile()
+        private fun process(
+            vararg sourceFile: SourceFile,
+            expectedExitCode: ExitCode = ExitCode.OK
+        ): Result {
+            compiler.sources = listOf(*sourceFile)
+            val compilationResult = compiler.compile()
 
-        assertThat(compilation.exitCode)
-            .withFailMessage(
-                "Expecting compiler to exit successfully. " +
-                        "Instead exit code ${compilation.exitCode} returned."
-            )
-            .isEqualTo(KotlinCompilation.ExitCode.OK)
+//            TODO: Extract this assertion
+            assertThat(compilationResult.exitCode)
+                .withFailMessage(
+                    "Expected KSP compiler exit-code $expectedExitCode " +
+                            "but was ${compilationResult.exitCode}\n\n" +
+                            compilationResult.messages
+                )
+                .isEqualTo(expectedExitCode)
+
+            return compilationResult
+        }
     }
 
     private fun assertGeneratedFile(relativePath: String): AbstractFileAssert<*> {
